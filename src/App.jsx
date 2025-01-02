@@ -1,7 +1,10 @@
 /* eslint-disable react/prop-types */
 import "./index.css";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import StarRating from "./StarRating";
+import { useMovies } from "./useMovies";
+import { useLocalStorageState } from "./useLocalStorageState";
+import { useKey } from "./useKey";
 
 const average = (arr) =>
   arr.reduce((acc, cur, i, arr) => acc + cur / arr.length, 0);
@@ -10,11 +13,10 @@ const api_key = "fda3bf5c";
 
 export default function App() {
   const [query, setQuery] = useState("");
-  const [movies, setMovies] = useState([]);
-  const [watched, setWatched] = useState([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState("");
   const [selectedID, setSelectedID] = useState(null);
+  const { movies, isLoading, error } = useMovies(query);
+
+  const [watched, setWatched] = useLocalStorageState([], "watched");
 
   function handleCloseMovieDetails() {
     setSelectedID(null);
@@ -27,50 +29,6 @@ export default function App() {
   function handleDeleteWatched(id) {
     setWatched((watched) => watched.filter((movie) => movie.imdbID !== id));
   }
-
-  useEffect(
-    function () {
-      const controller = new AbortController();
-
-      async function fetchMovies() {
-        try {
-          setIsLoading(true);
-          setError("");
-          const url = `http://www.omdbapi.com/?apikey=${api_key}&s=${query}`;
-          const res = await fetch(url, { signal: controller.signal });
-          const data = await res.json();
-
-          if (!res.ok) {
-            throw new Error("An error occurred while fetching the data");
-          }
-
-          if (data.Response === "False") {
-            throw new Error("Movie not found!");
-          }
-          setMovies(data.Search);
-          setError("")
-        } catch (err) {
-          if (err.name !== 'AbortError')
-            setError(err.message);
-        } finally {
-          setIsLoading(false);
-        }
-      }
-
-      if (query === "") {
-        setMovies([]);
-        setError("");
-        return;
-      }
-
-      fetchMovies();
-
-      return function () {
-        controller.abort();
-      }
-    },
-    [query]
-  );
 
   return (
     <>
@@ -148,6 +106,20 @@ function Logo() {
 }
 
 function Search({ query, setQuery }) {
+  const inputEl = useRef(null);
+
+  // Focus right after the component first mounts
+  useEffect(() => {
+    inputEl.current.focus();
+  }, []);
+
+  // Using the useKey Custom Hook
+  useKey("Enter", () => {
+    if (document.activeElement === inputEl.current) return;
+    inputEl.current.focus();
+    setQuery("");
+  });
+
   return (
     <input
       className="search"
@@ -155,6 +127,7 @@ function Search({ query, setQuery }) {
       placeholder="Search movies..."
       value={query}
       onChange={(e) => setQuery(e.target.value)}
+      ref={inputEl}
     />
   );
 }
@@ -235,6 +208,14 @@ function MovieDetails({
   const [isLoading, setIsLoading] = useState(false);
   const [userRating, setUserRating] = useState(0);
 
+  const countRef = useRef(0);
+  useEffect(
+    function () {
+      if (userRating) countRef.current++;
+    },
+    [userRating]
+  );
+
   // Creating a new array of watched movies' imdbIDs and then checking if the selected movie is already watched
   const isWatched = watched.map((movie) => movie.imdbID).includes(selectedID);
   // Getting the rating set by the user to each movie object in the 'watched' movies array of movies objects
@@ -255,23 +236,30 @@ function MovieDetails({
     Genre: genre,
   } = movieDetail;
 
-  useEffect(
-    function () {
-      // Common function to run for both Mount and CleanUp function
-      function keyListener(e) {
-        if (e.key == "Escape") {
-          onCloseMovieDetails();
-        }
-      }
+  function handleAdd() {
+    const newWatchedMovie = {
+      imdbID: selectedID,
+      imdbRating: Number(imdbRating),
+      poster,
+      runtime: Number(runtime.split(" ")[0]),
+      title,
+      userRating,
+      year,
+      countRef,
+    };
 
-      document.addEventListener("keydown", keyListener);
+    onAddWatchedMovie(newWatchedMovie);
+  }
 
-      return function () {
-        document.removeEventListener("keydown", keyListener);
-      };
-    },
-    [onCloseMovieDetails]
-  );
+  // Each time we select a different movie, set the userRating to 0 to avoid getting the Add Button
+  /*  
+    The userRating value persists between renders because React keeps the component's state intact 
+    when the same MovieDetails component instance is reused. Only the props (e.g., selectedID) are updated, 
+    but the local state (userRating) does not reset automatically unless explicitly handled.  
+  */
+  useEffect(function() {setUserRating(0)}, [selectedID])
+
+  useKey("Escape", onCloseMovieDetails);
 
   useEffect(
     function () {
@@ -301,20 +289,6 @@ function MovieDetails({
     },
     [title]
   );
-
-  function handleAdd() {
-    const newWatchedMovie = {
-      imdbID: selectedID,
-      imdbRating: Number(imdbRating),
-      poster,
-      runtime: Number(runtime.split(" ")[0]),
-      title,
-      userRating,
-      year,
-    };
-
-    onAddWatchedMovie(newWatchedMovie);
-  }
 
   return (
     <div className="details">
